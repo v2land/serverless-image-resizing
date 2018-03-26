@@ -5,6 +5,7 @@ const S3 = new AWS.S3({
   signatureVersion: 'v4',
 });
 const Sharp = require('sharp');
+const guetzli = require('imagemin-guetzli');
 
 const BUCKET = process.env.BUCKET;
 const URL = process.env.URL;
@@ -16,24 +17,38 @@ exports.handler = function(event, context, callback) {
   const height = parseInt(match[2], 10);
   const originalKey = match[3];
 
-  S3.getObject({Bucket: BUCKET, Key: originalKey}).promise()
-    .then(data => Sharp(data.Body)
-      .resize(width, height)
-      .toFormat('png')
-      .toBuffer()
-    )
-    .then(buffer => S3.putObject({
-        Body: buffer,
-        Bucket: BUCKET,
-        ContentType: 'image/png',
-        Key: key,
-      }).promise()
-    )
-    .then(() => callback(null, {
+  S3.getObject({
+    Bucket: BUCKET,
+    Key: width + 'x' + height + '/' + originalKey
+  }, (err, object) => {
+    if (object) {
+      callback(null, {
         statusCode: '301',
-        headers: {'location': `${URL}/${key}`},
+        headers: { 'location': `${URL}/${key}` },
         body: '',
       })
-    )
-    .catch(err => callback(err))
+    } else {
+      S3.getObject({ Bucket: BUCKET, Key: originalKey }).promise()
+        .then(data => Sharp(data.Body)
+          .resize(width, height)
+          .toFormat('png')
+          .toBuffer()
+        )
+        .then(buffer => guetzli({ quality: 90 })(buffer))
+        .then(buffer => S3.putObject({
+          Body: buffer,
+          Bucket: BUCKET,
+          ContentType: 'image/png',
+          Key: key,
+        }).promise()
+        )
+        .then(() => callback(null, {
+          statusCode: '301',
+          headers: { 'location': `${URL}/${key}` },
+          body: '',
+        })
+        )
+        .catch(err => callback(err))
+    }
+  })
 }
